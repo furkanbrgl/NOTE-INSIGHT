@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system/legacy';
 import { listSegments } from '../../services/storage/segmentsRepo';
 import { getNote } from '../../services/storage/notesRepo';
 import type { Segment } from '../../services/models/types';
@@ -87,8 +88,21 @@ export function TranscriptTab() {
       const note = getNote(noteId);
       if (note?.audioPath) {
         console.log('[TranscriptTab] Audio path found:', note.audioPath);
-        setAudioPath(note.audioPath);
-        setPlaybackStatus('stopped');
+        // Check if file exists (absolute paths from previous installs may not exist)
+        FileSystem.getInfoAsync(note.audioPath).then((fileInfo) => {
+          if (fileInfo.exists) {
+            setAudioPath(note.audioPath);
+            setPlaybackStatus('stopped');
+          } else {
+            console.log('[TranscriptTab] Audio file does not exist:', note.audioPath);
+            setAudioPath(null);
+            setPlaybackStatus('no_audio');
+          }
+        }).catch((error) => {
+          console.error('[TranscriptTab] Error checking audio file:', error);
+          setAudioPath(null);
+          setPlaybackStatus('no_audio');
+        });
       } else {
         console.log('[TranscriptTab] No audio path for this note');
         setAudioPath(null);
@@ -169,9 +183,15 @@ export function TranscriptTab() {
       setPlaybackStatus('playing');
       console.log('[TranscriptTab] Audio playback started');
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('[TranscriptTab] Error playing audio:', error);
-      setPlaybackStatus('stopped');
+      // If file doesn't exist, set to no_audio; otherwise stopped
+      if (error?.code === 'EXAV' || error?.message?.includes('doesn\'t exist') || error?.message?.includes('not found')) {
+        setPlaybackStatus('no_audio');
+        setAudioPath(null); // Clear invalid path
+      } else {
+        setPlaybackStatus('stopped');
+      }
     }
   };
 
