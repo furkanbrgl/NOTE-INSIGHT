@@ -1,15 +1,18 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Alert,
+  InteractionManager,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Swipeable } from 'react-native-gesture-handler';
 import type { RootStackParamList } from '../../app/navigation/RootNavigator';
-import { listNotes } from '../../services/storage/notesRepo';
+import { useNotesStore } from '../../app/store/useNotesStore';
 import type { Note } from '../../services/models/types';
 
 type NotesListNavigationProp = NativeStackNavigationProp<RootStackParamList, 'MainTabs'>;
@@ -35,44 +38,119 @@ function formatDuration(ms: number | null): string {
 
 export function NotesListScreen() {
   const navigation = useNavigation<NotesListNavigationProp>();
-  const [notes, setNotes] = useState<Note[]>([]);
+  const { notes, loadNotes, deleteNote, deletingId, setDeletingId } = useNotesStore();
+  const swipeableRefs = useRef<Map<string, Swipeable>>(new Map());
 
   useFocusEffect(
     useCallback(() => {
       console.log('[NotesListScreen] Focus - loading notes');
-      const loadedNotes = listNotes(50);
-      console.log('[NotesListScreen] Loaded', loadedNotes.length, 'notes');
-      setNotes(loadedNotes);
-    }, [])
+      loadNotes(50);
+    }, [loadNotes])
   );
 
   const handleNotePress = (noteId: string) => {
     navigation.navigate('NoteDetail', { noteId });
   };
 
-  const renderItem = ({ item }: { item: Note }) => (
-    <TouchableOpacity
-      style={styles.noteItem}
-      onPress={() => handleNotePress(item.id)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.noteContent}>
-        <Text style={styles.noteTitle} numberOfLines={1}>
-          {item.title || 'Untitled'}
-        </Text>
-        <View style={styles.noteMeta}>
-          <Text style={styles.noteDate}>{formatDate(item.createdAt)}</Text>
-          <Text style={styles.noteDuration}>{formatDuration(item.durationMs)}</Text>
-          {item.languageLock && (
-            <View style={styles.languageTagContainer}>
-              <Text style={styles.languageTag}>{item.languageLock.toUpperCase()}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-      <Text style={styles.chevron}>›</Text>
-    </TouchableOpacity>
+  const handleDelete = (noteId: string, swipeableRef: Swipeable | null) => {
+    Alert.alert(
+      'Delete Note',
+      'Are you sure you want to delete this note? This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => {
+            // Close swipeable on cancel
+            swipeableRef?.close();
+          },
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            // Close swipeable immediately for smooth UI
+            swipeableRef?.close();
+
+            // Defer heavy work until after swipe animation completes
+            InteractionManager.runAfterInteractions(async () => {
+              try {
+                setDeletingId(noteId);
+                await deleteNote(noteId);
+                console.log('[NotesListScreen] Note deleted:', noteId);
+              } catch (error) {
+                console.error('[NotesListScreen] Error deleting note:', error);
+                Alert.alert('Error', 'Failed to delete note. Please try again.');
+              } finally {
+                setDeletingId(null);
+              }
+            });
+          },
+        },
+      ]
+    );
+  };
+
+  const renderRightActions = (noteId: string) => (
+    <View style={styles.rightActionContainer}>
+      <TouchableOpacity
+        style={styles.deleteButton}
+        onPress={() => {
+          const swipeableRef = swipeableRefs.current.get(noteId);
+          handleDelete(noteId, swipeableRef || null);
+        }}
+        disabled={deletingId === noteId}
+      >
+        <Text style={styles.deleteButtonText}>Delete</Text>
+      </TouchableOpacity>
+    </View>
   );
+
+  const renderItem = ({ item }: { item: Note }) => {
+    return (
+      <Swipeable
+        ref={(ref) => {
+          if (ref) {
+            swipeableRefs.current.set(item.id, ref);
+          } else {
+            swipeableRefs.current.delete(item.id);
+          }
+        }}
+        renderRightActions={() => renderRightActions(item.id)}
+      >
+        <TouchableOpacity
+          style={styles.noteItem}
+          onPress={() => handleNotePress(item.id)}
+          activeOpacity={0.7}
+          disabled={deletingId === item.id}
+        >
+          <View style={styles.noteContent}>
+            <Text style={styles.noteTitle} numberOfLines={1}>
+              {item.title || 'Untitled'}
+            </Text>
+            <View style={styles.noteMeta}>
+              <Text style={styles.noteDate}>{formatDate(item.createdAt)}</Text>
+              <Text style={styles.noteDuration}>{formatDuration(item.durationMs)}</Text>
+            {item.languageLock && (
+              <View style={styles.languageTagContainer}>
+                <Text style={styles.languageTag}>
+                  {item.languageLock === 'tr'
+                    ? 'TR'
+                    : item.languageLock === 'en'
+                    ? 'EN'
+                    : item.languageLock === 'auto'
+                    ? 'AUTO'
+                    : item.languageLock.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            </View>
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </TouchableOpacity>
+      </Swipeable>
+    );
+  };
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
@@ -168,5 +246,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888',
     textAlign: 'center',
+  },
+  rightActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    backgroundColor: '#fff',
+    paddingRight: 16,
+  },
+  deleteButton: {
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    height: '100%',
+    borderRadius: 0,
+  },
+  deleteButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

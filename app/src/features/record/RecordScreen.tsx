@@ -38,6 +38,7 @@ export function RecordScreen() {
     start,
     stop,
     setNoteId,
+    setLanguageMode,
     reset,
   } = useRecordingStore();
 
@@ -55,20 +56,21 @@ export function RecordScreen() {
       const newNoteId = generateUUID();
       const now = Date.now();
 
-      // Create note in database
+      // Create note in database with languageLock from languageMode
       const newNote: Note = {
         id: newNoteId,
         createdAt: now,
         updatedAt: now,
         title: `Recording ${new Date(now).toLocaleString()}`,
         durationMs: null,
-        languageLock: null,
+        languageLock: languageMode, // Save selected language mode as languageLock
         audioPath: null,
         asrModel: asrModel,
         llmModel: null,
         insightsStatus: 'pending',
       };
       insertNote(newNote);
+      console.log('[RecordScreen] Created note with languageLock:', languageMode);
 
       // Update store
       setNoteId(newNoteId);
@@ -97,14 +99,24 @@ export function RecordScreen() {
     try {
       stop();
 
-      // Stop native recording
-      const result = await TranscriptionNative.stopRecording(noteId);
+      // Get languageLock from note (should match languageMode we saved)
+      // For now, use languageMode from store since we just saved it
+      // In the future, we could read from note if needed
+      const noteLanguageLock = languageMode;
 
-      // Update note in database
+      console.log('[RecordScreen] Stopping recording with languageLock:', noteLanguageLock);
+
+      // Stop native recording - pass languageLock for transcription
+      const result = await TranscriptionNative.stopRecording({
+        noteId,
+        languageLock: noteLanguageLock,
+      });
+
+      // Update note in database with transcription result
       updateNoteStopInfo(noteId, {
         audioPath: result.audioPath,
         durationMs: result.durationMs,
-        languageLock: result.languageLock,
+        languageLock: result.languageLock || noteLanguageLock, // Use result if available, otherwise use what we sent
         updatedAt: Date.now(),
       });
 
@@ -118,24 +130,88 @@ export function RecordScreen() {
       console.error('[RecordScreen] Failed to stop recording:', error);
       reset();
     }
-  }, [noteId, stop, reset, navigation]);
+  }, [noteId, languageMode, stop, reset, navigation]);
 
   const isRecording = status === 'recording';
   const isStopping = status === 'stopping';
 
+  const handleLanguageModeChange = (mode: 'auto' | 'tr' | 'en') => {
+    setLanguageMode(mode);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
+        {/* Language Picker */}
+        {!isRecording && !isStopping && (
+          <View style={styles.languagePickerContainer}>
+            <Text style={styles.languagePickerLabel}>Language:</Text>
+            <View style={styles.languagePicker}>
+              <TouchableOpacity
+                style={[
+                  styles.languageOption,
+                  languageMode === 'auto' && styles.languageOptionActive,
+                ]}
+                onPress={() => handleLanguageModeChange('auto')}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.languageOptionText,
+                    languageMode === 'auto' && styles.languageOptionTextActive,
+                  ]}
+                >
+                  Auto
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.languageOption,
+                  languageMode === 'tr' && styles.languageOptionActive,
+                ]}
+                onPress={() => handleLanguageModeChange('tr')}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.languageOptionText,
+                    languageMode === 'tr' && styles.languageOptionTextActive,
+                  ]}
+                >
+                  TR
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.languageOption,
+                  languageMode === 'en' && styles.languageOptionActive,
+                ]}
+                onPress={() => handleLanguageModeChange('en')}
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={[
+                    styles.languageOptionText,
+                    languageMode === 'en' && styles.languageOptionTextActive,
+                  ]}
+                >
+                  EN
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Status indicator */}
         <View style={styles.statusContainer}>
           {isRecording && (
             <>
               <View style={styles.recordingDot} />
               <Text style={styles.statusText}>Recording</Text>
-              {languageLock && (
+              {languageMode && (
                 <View style={styles.languageTagContainer}>
                   <Text style={styles.languageTag}>
-                    {languageLock.toUpperCase()}
+                    {languageMode.toUpperCase()}
                   </Text>
                 </View>
               )}
@@ -313,5 +389,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+  },
+  languagePickerContainer: {
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  languagePickerLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  languagePicker: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    padding: 4,
+    gap: 4,
+  },
+  languageOption: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 80,
+  },
+  languageOptionActive: {
+    backgroundColor: '#007AFF',
+  },
+  languageOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  languageOptionTextActive: {
+    color: '#fff',
   },
 });

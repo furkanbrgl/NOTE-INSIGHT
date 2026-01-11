@@ -29,6 +29,11 @@ export interface StartRecordingParams {
   asrModel: string;
 }
 
+export interface StopRecordingParams {
+  noteId: string;
+  languageLock: 'auto' | 'tr' | 'en';
+}
+
 export interface StopRecordingResult {
   audioPath: string;
   durationMs: number;
@@ -92,13 +97,13 @@ class TranscriptionNativeModule {
     return TranscriptionModule.startRecording(params);
   }
 
-  async stopRecording(noteId: string): Promise<StopRecordingResult> {
+  async stopRecording(params: StopRecordingParams): Promise<StopRecordingResult> {
     if (!TranscriptionModule) {
       console.warn('[TranscriptionNative] Native module not available, returning mock result');
-      return { audioPath: '', durationMs: 5000, languageLock: 'tr' };
+      return { audioPath: '', durationMs: 5000, languageLock: params.languageLock };
     }
-    console.log('[TranscriptionNative] stopRecording called:', noteId);
-    return TranscriptionModule.stopRecording(noteId);
+    console.log('[TranscriptionNative] stopRecording called:', params.noteId, 'languageLock:', params.languageLock);
+    return TranscriptionModule.stopRecording(params);
   }
 
   async setLanguage(noteId: string, mode: 'auto' | 'tr' | 'en'): Promise<void> {

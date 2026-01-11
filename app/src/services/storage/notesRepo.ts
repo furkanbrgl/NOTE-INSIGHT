@@ -68,3 +68,10 @@ export function getNote(noteId: string): Note | null {
   return row ? rowToNote(row) : null;
 }
 
+export function deleteNote(noteId: string): void {
+  // Delete from notes - segments are automatically deleted due to FOREIGN KEY ON DELETE CASCADE
+  // Since CASCADE is enabled, we only need to delete from notes table
+  runSQL(`DELETE FROM notes WHERE id = ?`, [noteId]);
+  console.log('[notesRepo] Deleted note and cascaded segments:', noteId);
+}
+

@@ -50,3 +50,9 @@ export function listSegments(noteId: string): Segment[] {
   console.log('[segmentsRepo] listSegments returned', rows.length, 'rows for noteId:', noteId);
   return rows.map(rowToSegment);
 }
+
+export function deleteSegmentsForNote(noteId: string): void {
+  runSQL(`DELETE FROM segments WHERE noteId = ?`, [noteId]);
+  // Note: This is redundant if FOREIGN KEY ON DELETE CASCADE is enabled,
+  // but kept for explicit control and clarity
+}

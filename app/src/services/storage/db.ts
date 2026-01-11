@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'noteinsight.db';
-const SCHEMA_VERSION = 2; // Increment when schema changes
+const SCHEMA_VERSION = 3; // Increment when schema changes
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -75,6 +75,20 @@ function runMigrations(database: SQLite.SQLiteDatabase): void {
     `);
     
     console.log('[db] Cleaned up duplicates and added unique index');
+  }
+
+  // Version 2 -> 3: Ensure languageLock defaults to "auto" for existing notes
+  if (currentVersion < 3) {
+    console.log('[db] Running migration to version 3 (set default languageLock)');
+    
+    // Update existing notes with null languageLock to "auto"
+    database.execSync(`
+      UPDATE notes 
+      SET languageLock = 'auto' 
+      WHERE languageLock IS NULL;
+    `);
+    
+    console.log('[db] Set default languageLock to "auto" for existing notes');
   }
 
   // Update schema version
