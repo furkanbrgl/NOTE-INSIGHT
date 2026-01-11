@@ -35,7 +35,6 @@ export function RecordScreen() {
     languageMode,
     languageLock,
     asrModel,
-    partialSegments,
     start,
     stop,
     setNoteId,
@@ -121,11 +120,6 @@ export function RecordScreen() {
     }
   }, [noteId, stop, reset, navigation]);
 
-  // Get current caption text from partial segments
-  const currentCaption = partialSegments.length > 0
-    ? partialSegments.map((s: { text: string }) => s.text).join(' ')
-    : '';
-
   const isRecording = status === 'recording';
   const isStopping = status === 'stopping';
 
@@ -155,20 +149,19 @@ export function RecordScreen() {
           )}
         </View>
 
-        {/* Live captions area */}
+        {/* Recording status area */}
         <View style={styles.captionsContainer}>
           <ScrollView
             style={styles.captionsScroll}
             contentContainerStyle={styles.captionsContent}
           >
             {isRecording ? (
-              currentCaption ? (
-                <Text style={styles.captionText}>{currentCaption}</Text>
-              ) : (
-                <Text style={styles.captionPlaceholder}>
-                  Listening...
+              <Text style={styles.captionPlaceholder}>
+                Recording…{'\n\n'}
+                <Text style={styles.captionHint}>
+                  Transcription will appear after you stop recording
                 </Text>
-              )
+              </Text>
             ) : (
               <Text style={styles.captionPlaceholder}>
                 Tap the button below to start recording
@@ -272,6 +265,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#999',
     textAlign: 'center',
+  },
+  captionHint: {
+    fontSize: 14,
+    color: '#bbb',
+    fontStyle: 'italic',
   },
   buttonContainer: {
     alignItems: 'center',

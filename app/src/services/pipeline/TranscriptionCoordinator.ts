@@ -62,15 +62,11 @@ class TranscriptionCoordinatorService {
   };
 
   private handleFinal = (event: AsrFinalEvent): void => {
-    const store = useRecordingStore.getState();
+    // Note: We do NOT check store.noteId here because whisper transcription
+    // arrives AFTER recording stops and the store is reset.
+    // The event.noteId is always the correct noteId to use.
     
-    // Verify we're recording the same note
-    if (store.noteId !== event.noteId) return;
-
-    // Update language lock if provided
-    if (event.languageLock && !store.languageLock) {
-      store.setLanguageLock(event.languageLock);
-    }
+    console.log(`[TranscriptionCoordinator] handleFinal for noteId: ${event.noteId}`);
 
     // Deduplicate finals using startMs+endMs+text as key
     const segmentsToInsert: Omit<Segment, 'id' | 'noteId'>[] = [];
@@ -93,11 +89,10 @@ class TranscriptionCoordinatorService {
     // Persist to database
     if (segmentsToInsert.length > 0) {
       insertSegments(event.noteId, segmentsToInsert);
-      console.log(`[TranscriptionCoordinator] Inserted ${segmentsToInsert.length} final segment(s)`);
+      console.log(`[TranscriptionCoordinator] Inserted ${segmentsToInsert.length} final segment(s) for noteId: ${event.noteId}`);
+    } else {
+      console.log(`[TranscriptionCoordinator] No new segments to insert (already existed or empty)`);
     }
-
-    // Do NOT clear partialSegments here - let the next partial naturally replace them
-    // This prevents the "Listening..." flicker between final and next partial
   };
 }
 

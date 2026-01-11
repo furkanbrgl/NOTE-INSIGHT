@@ -43,13 +43,22 @@ class TranscriptionNativeModule {
   private finalListeners: Set<EventCallback<AsrFinalEvent>> = new Set();
   private stateListeners: Set<EventCallback<RecordingState>> = new Set();
   private subscriptions: Array<{ remove: () => void }> = [];
+  private isInitialized: boolean = false;
 
   constructor() {
+    this.initialize();
+  }
+
+  private initialize(): void {
+    if (this.isInitialized) return;
+
     if (Platform.OS === 'ios' && TranscriptionModule) {
+      console.log('[TranscriptionNative] Initializing with native module');
       this.emitter = new NativeEventEmitter(TranscriptionModule);
       this.setupListeners();
+      this.isInitialized = true;
     } else {
-      console.warn('[TranscriptionNative] Native module not available, using mock');
+      console.warn('[TranscriptionNative] Native module not available');
     }
   }
 
@@ -57,14 +66,17 @@ class TranscriptionNativeModule {
     if (!this.emitter) return;
 
     const partialSub = this.emitter.addListener('onAsrPartial', (event: AsrPartialEvent) => {
+      console.log('[TranscriptionNative] onAsrPartial received');
       this.partialListeners.forEach((cb) => cb(event));
     });
 
     const finalSub = this.emitter.addListener('onAsrFinal', (event: AsrFinalEvent) => {
+      console.log('[TranscriptionNative] onAsrFinal received');
       this.finalListeners.forEach((cb) => cb(event));
     });
 
     const stateSub = this.emitter.addListener('onAsrState', (event: RecordingState) => {
+      console.log('[TranscriptionNative] onAsrState received:', event.status);
       this.stateListeners.forEach((cb) => cb(event));
     });
 
@@ -73,31 +85,34 @@ class TranscriptionNativeModule {
 
   async startRecording(params: StartRecordingParams): Promise<void> {
     if (!TranscriptionModule) {
-      console.log('[TranscriptionNative] Mock: startRecording', params);
+      console.warn('[TranscriptionNative] Native module not available, skipping startRecording');
       return;
     }
+    console.log('[TranscriptionNative] startRecording called:', params.noteId);
     return TranscriptionModule.startRecording(params);
   }
 
   async stopRecording(noteId: string): Promise<StopRecordingResult> {
     if (!TranscriptionModule) {
-      console.log('[TranscriptionNative] Mock: stopRecording', noteId);
-      return { audioPath: '', durationMs: 5000, languageLock: 'en' };
+      console.warn('[TranscriptionNative] Native module not available, returning mock result');
+      return { audioPath: '', durationMs: 5000, languageLock: 'tr' };
     }
+    console.log('[TranscriptionNative] stopRecording called:', noteId);
     return TranscriptionModule.stopRecording(noteId);
   }
 
   async setLanguage(noteId: string, mode: 'auto' | 'tr' | 'en'): Promise<void> {
     if (!TranscriptionModule) {
-      console.log('[TranscriptionNative] Mock: setLanguage', noteId, mode);
+      console.warn('[TranscriptionNative] Native module not available, skipping setLanguage');
       return;
     }
+    console.log('[TranscriptionNative] setLanguage called:', noteId, mode);
     return TranscriptionModule.setLanguage(noteId, mode);
   }
 
   async getState(noteId: string): Promise<RecordingState> {
     if (!TranscriptionModule) {
-      console.log('[TranscriptionNative] Mock: getState', noteId);
+      console.warn('[TranscriptionNative] Native module not available, returning idle state');
       return { status: 'idle', noteId: null, languageMode: 'auto' };
     }
     return TranscriptionModule.getState(noteId);
@@ -132,9 +147,9 @@ class TranscriptionNativeModule {
     this.partialListeners.clear();
     this.finalListeners.clear();
     this.stateListeners.clear();
+    this.isInitialized = false;
   }
 }
 
 // Singleton instance
 export const TranscriptionNative = new TranscriptionNativeModule();
-
