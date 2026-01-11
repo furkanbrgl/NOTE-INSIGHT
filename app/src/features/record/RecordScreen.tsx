@@ -35,6 +35,7 @@ export function RecordScreen() {
     languageMode,
     languageLock,
     asrModel,
+    partialSegments,
     start,
     stop,
     setNoteId,
@@ -225,19 +226,29 @@ export function RecordScreen() {
           )}
         </View>
 
-        {/* Recording status area */}
+        {/* Live Captions */}
         <View style={styles.captionsContainer}>
           <ScrollView
             style={styles.captionsScroll}
             contentContainerStyle={styles.captionsContent}
           >
             {isRecording ? (
-              <Text style={styles.captionPlaceholder}>
-                Recording…{'\n\n'}
-                <Text style={styles.captionHint}>
-                  Transcription will appear after you stop recording
+              partialSegments.length > 0 ? (
+                <View>
+                  {partialSegments.map((segment, index) => (
+                    <Text key={index} style={styles.captionText}>
+                      {segment.text}
+                    </Text>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.captionPlaceholder}>
+                  Listening…{'\n\n'}
+                  <Text style={styles.captionHint}>
+                    Live captions will appear here
+                  </Text>
                 </Text>
-              </Text>
+              )
             ) : (
               <Text style={styles.captionPlaceholder}>
                 Tap the button below to start recording
