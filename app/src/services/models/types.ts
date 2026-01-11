@@ -28,3 +28,14 @@ export interface NoteStopInfo {
   updatedAt: number;
 }
 
+export interface Insight {
+  noteId: string;
+  language: 'en' | 'tr';
+  model: string;
+  summary: string;
+  keyPoints: string[];
+  actionItems: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+

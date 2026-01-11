@@ -1,7 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'noteinsight.db';
-const SCHEMA_VERSION = 3; // Increment when schema changes
+const SCHEMA_VERSION = 4; // Increment when schema changes
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -14,6 +14,9 @@ function getDatabase(): SQLite.SQLiteDatabase {
 }
 
 function runMigrations(database: SQLite.SQLiteDatabase): void {
+  // Enable foreign keys (required for CASCADE delete)
+  database.execSync('PRAGMA foreign_keys = ON');
+
   // Get current schema version
   const versionResult = database.getFirstSync<{ user_version: number }>(
     'PRAGMA user_version'
@@ -91,10 +94,69 @@ function runMigrations(database: SQLite.SQLiteDatabase): void {
     console.log('[db] Set default languageLock to "auto" for existing notes');
   }
 
+  // Version 3 -> 4: Add note_insights table
+  if (currentVersion < 4) {
+    console.log('[db] Running migration to version 4 (add note_insights table)');
+    database.execSync(`
+      CREATE TABLE IF NOT EXISTS note_insights (
+        noteId TEXT PRIMARY KEY,
+        language TEXT NOT NULL,
+        model TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        keyPointsJson TEXT NOT NULL,
+        actionItemsJson TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        FOREIGN KEY (noteId) REFERENCES notes(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_note_insights_noteId ON note_insights(noteId);
+    `);
+    console.log('[db] Created note_insights table with CASCADE delete');
+  }
+
   // Update schema version
   if (currentVersion < SCHEMA_VERSION) {
     database.execSync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     console.log('[db] Updated schema version to', SCHEMA_VERSION);
+  }
+
+  // Repair/sanity check: Verify required tables exist
+  // This handles cases where schema version is set but tables are missing
+  repairDatabase(database);
+}
+
+function repairDatabase(database: SQLite.SQLiteDatabase): void {
+  // Check if note_insights table exists
+  const tableCheck = database.getFirstSync<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='note_insights'`
+  );
+
+  // Get current schema version
+  const versionResult = database.getFirstSync<{ user_version: number }>(
+    'PRAGMA user_version'
+  );
+  const currentVersion = versionResult?.user_version ?? 0;
+
+  // If schema version >= 4 but note_insights table is missing, recreate it
+  if (currentVersion >= 4 && !tableCheck) {
+    console.log('[db] Repair: note_insights missing, recreating table');
+    database.execSync(`
+      CREATE TABLE IF NOT EXISTS note_insights (
+        noteId TEXT PRIMARY KEY,
+        language TEXT NOT NULL,
+        model TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        keyPointsJson TEXT NOT NULL,
+        actionItemsJson TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        FOREIGN KEY (noteId) REFERENCES notes(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_note_insights_noteId ON note_insights(noteId);
+    `);
+    console.log('[db] Repair: note_insights table recreated');
   }
 }
 
