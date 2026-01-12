@@ -39,8 +39,17 @@ class TranscriptionCoordinatorService {
   private handlePartial = (event: AsrPartialEvent): void => {
     const store = useRecordingStore.getState();
     
+    // Gate on sessionId: ignore if sessionId doesn't match or is null
+    if (!store.sessionId || store.sessionId !== event.sessionId) {
+      console.log(`[TranscriptionCoordinator] Ignoring stale partial event - sessionId mismatch (store: ${store.sessionId}, event: ${event.sessionId})`);
+      return;
+    }
+    
     // Verify we're recording the same note
-    if (store.noteId !== event.noteId) return;
+    if (store.noteId !== event.noteId) {
+      console.log(`[TranscriptionCoordinator] Ignoring partial event - noteId mismatch (store: ${store.noteId}, event: ${event.noteId})`);
+      return;
+    }
 
     // Update language lock if provided
     if (event.languageLock && !store.languageLock) {
@@ -62,11 +71,23 @@ class TranscriptionCoordinatorService {
   };
 
   private handleFinal = (event: AsrFinalEvent): void => {
-    // Note: We do NOT check store.noteId here because whisper transcription
-    // arrives AFTER recording stops and the store is reset.
-    // The event.noteId is always the correct noteId to use.
+    const store = useRecordingStore.getState();
     
-    console.log(`[TranscriptionCoordinator] handleFinal for noteId: ${event.noteId}`);
+    // For final events: sessionId gating is conditional
+    // - If store.sessionId is set (we're recording), it must match
+    // - If store.sessionId is null (store was reset), allow processing (final events are expected after stop)
+    if (store.sessionId && store.sessionId !== event.sessionId) {
+      console.log(`[TranscriptionCoordinator] Ignoring stale final event - sessionId mismatch (store: ${store.sessionId}, event: ${event.sessionId})`);
+      return;
+    }
+    
+    // Verify noteId matches when available (for safety)
+    if (store.noteId && store.noteId !== event.noteId) {
+      console.log(`[TranscriptionCoordinator] Ignoring final event - noteId mismatch (store: ${store.noteId}, event: ${event.noteId})`);
+      return;
+    }
+    
+    console.log(`[TranscriptionCoordinator] handleFinal for noteId: ${event.noteId}, sessionId: ${event.sessionId}${store.sessionId ? '' : ' (store reset, allowing final event)'}`);
 
     // Deduplicate finals using startMs+endMs+text as key
     const segmentsToInsert: Omit<Segment, 'id' | 'noteId'>[] = [];

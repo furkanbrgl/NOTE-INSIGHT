@@ -6,31 +6,38 @@ const { TranscriptionModule } = NativeModules;
 // Event types
 export interface AsrPartialEvent {
   noteId: string;
+  sessionId: string;
   segments: Omit<Segment, 'id' | 'noteId'>[];
   languageLock?: string | null;
 }
 
 export interface AsrFinalEvent {
   noteId: string;
+  sessionId: string;
   segments: Omit<Segment, 'id' | 'noteId'>[];
   languageLock?: string | null;
+  error?: string;
+  durationMs?: number;
 }
 
 export interface RecordingState {
   status: 'idle' | 'recording' | 'stopping';
   noteId: string | null;
+  sessionId?: string | null;
   languageMode: string;
   languageLock?: string | null;
 }
 
 export interface StartRecordingParams {
   noteId: string;
+  sessionId: string;
   languageMode: 'auto' | 'tr' | 'en';
   asrModel: string;
 }
 
 export interface StopRecordingParams {
   noteId: string;
+  sessionId: string;
   languageLock: 'auto' | 'tr' | 'en';
 }
 

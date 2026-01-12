@@ -44,6 +44,11 @@ class TranscriptionModule: RCTEventEmitter, TranscriptionSessionDelegate {
             return
         }
         
+        guard let sessionId = params["sessionId"] as? String else {
+            reject("E_INVALID_PARAMS", "sessionId is required", nil)
+            return
+        }
+        
         let languageMode = params["languageMode"] as? String ?? "auto"
         let asrModel = params["asrModel"] as? String ?? "base_q5_1"
         
@@ -52,9 +57,9 @@ class TranscriptionModule: RCTEventEmitter, TranscriptionSessionDelegate {
             return
         }
         
-        session?.startRecording(noteId: noteId, languageMode: languageMode, asrModel: asrModel)
+        session?.startRecording(noteId: noteId, sessionId: sessionId, languageMode: languageMode, asrModel: asrModel)
         
-        print("[TranscriptionModule] startRecording called: \(noteId)")
+        print("[TranscriptionModule] startRecording called: \(noteId), sessionId: \(sessionId)")
         resolve(nil)
     }
     
@@ -66,6 +71,11 @@ class TranscriptionModule: RCTEventEmitter, TranscriptionSessionDelegate {
             return
         }
         
+        guard let sessionId = params["sessionId"] as? String else {
+            reject("E_INVALID_PARAMS", "sessionId is required", nil)
+            return
+        }
+        
         guard session?.currentNoteId == noteId else {
             reject("E_NOT_RECORDING", "Not recording this note", nil)
             return
@@ -74,7 +84,7 @@ class TranscriptionModule: RCTEventEmitter, TranscriptionSessionDelegate {
         let languageLock = params["languageLock"] as? String ?? "auto"
         
         // Debug log to confirm bridge is receiving correct values
-        print("[TranscriptionModule] stopRecording received - noteId: \(noteId), languageLock: \(languageLock)")
+        print("[TranscriptionModule] stopRecording received - noteId: \(noteId), sessionId: \(sessionId), languageLock: \(languageLock)")
         
         let result = session?.stopRecording(languageLock: languageLock) ?? [
             "audioPath": "",

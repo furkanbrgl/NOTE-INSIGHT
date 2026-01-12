@@ -32,6 +32,7 @@ export function RecordScreen() {
   const {
     status,
     noteId,
+    sessionId,
     languageMode,
     languageLock,
     asrModel,
@@ -39,6 +40,7 @@ export function RecordScreen() {
     start,
     stop,
     setNoteId,
+    setSessionId,
     setLanguageMode,
     reset,
   } = useRecordingStore();
@@ -53,8 +55,9 @@ export function RecordScreen() {
 
   const handleStartRecording = useCallback(async () => {
     try {
-      // Generate new note ID
+      // Generate new note ID and session ID
       const newNoteId = generateUUID();
+      const newSessionId = generateUUID();
       const now = Date.now();
 
       // Create note in database with languageLock from languageMode
@@ -75,6 +78,7 @@ export function RecordScreen() {
 
       // Update store
       setNoteId(newNoteId);
+      setSessionId(newSessionId);
       start();
 
       // Reset coordinator session
@@ -83,19 +87,20 @@ export function RecordScreen() {
       // Start native recording
       await TranscriptionNative.startRecording({
         noteId: newNoteId,
+        sessionId: newSessionId,
         languageMode,
         asrModel,
       });
 
-      console.log('[RecordScreen] Recording started:', newNoteId);
+      console.log('[RecordScreen] Recording started:', newNoteId, 'sessionId:', newSessionId);
     } catch (error) {
       console.error('[RecordScreen] Failed to start recording:', error);
       reset();
     }
-  }, [languageMode, asrModel, setNoteId, start, reset]);
+  }, [languageMode, asrModel, setNoteId, setSessionId, start, reset]);
 
   const handleStopRecording = useCallback(async () => {
-    if (!noteId) return;
+    if (!noteId || !sessionId) return;
 
     try {
       stop();
@@ -110,6 +115,7 @@ export function RecordScreen() {
       // Stop native recording - pass languageLock for transcription
       const result = await TranscriptionNative.stopRecording({
         noteId,
+        sessionId,
         languageLock: noteLanguageLock,
       });
 
@@ -131,7 +137,7 @@ export function RecordScreen() {
       console.error('[RecordScreen] Failed to stop recording:', error);
       reset();
     }
-  }, [noteId, languageMode, stop, reset, navigation]);
+  }, [noteId, sessionId, languageMode, stop, reset, navigation]);
 
   const isRecording = status === 'recording';
   const isStopping = status === 'stopping';

@@ -17,6 +17,7 @@ import AVFoundation
     
     // Current session state
     private var noteId: String?
+    private var sessionId: String?
     private var languageMode: String = "auto"
     private var languageLock: String?
     private var asrModel: String = "base_q5_1"
@@ -156,13 +157,14 @@ import AVFoundation
     
     // MARK: - Recording Control
     
-    @objc func startRecording(noteId: String, languageMode: String, asrModel: String) {
+    @objc func startRecording(noteId: String, sessionId: String, languageMode: String, asrModel: String) {
         guard !isRecording else {
             print("[TranscriptionSession] Already recording")
             return
         }
         
         self.noteId = noteId
+        self.sessionId = sessionId
         self.languageMode = languageMode
         self.asrModel = asrModel
         self.languageLock = nil
@@ -419,6 +421,7 @@ import AVFoundation
                 // Emit partial
                 let event: [String: Any] = [
                     "noteId": self.noteId ?? "",
+                    "sessionId": self.sessionId ?? "",
                     "segments": limitedSegments,
                     "languageLock": eventLanguageLock
                 ]
@@ -630,6 +633,7 @@ import AVFoundation
         // Emit final
         let event: [String: Any] = [
             "noteId": noteId,
+            "sessionId": self.sessionId ?? "",
             "segments": segments,
             "languageLock": finalLanguageLock
         ]
@@ -643,6 +647,7 @@ import AVFoundation
     private func emitTranscriptionError(noteId: String, durationMs: Int, error: String) {
         let event: [String: Any] = [
             "noteId": noteId,
+            "sessionId": self.sessionId ?? "",
             "durationMs": durationMs,
             "error": error,
             "segments": [] as [[String: Any]] // Include empty segments array to prevent JS TypeError
@@ -864,12 +869,15 @@ import AVFoundation
     }
     
     private func emitState() {
-        let event: [String: Any] = [
+        var event: [String: Any] = [
             "status": currentStatus,
             "noteId": noteId ?? NSNull(),
             "languageMode": languageMode,
             "languageLock": languageLock ?? NSNull()
         ]
+        if let sessionId = sessionId {
+            event["sessionId"] = sessionId
+        }
         delegate?.onAsrState(event)
     }
 }

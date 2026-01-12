@@ -8,6 +8,7 @@ type AsrModel = 'base_q5_1';
 interface RecordingState {
   status: RecordingStatus;
   noteId: string | null;
+  sessionId: string | null;
   languageMode: LanguageMode;
   languageLock: string | null;
   asrModel: AsrModel;
@@ -19,6 +20,7 @@ interface RecordingActions {
   stop: () => void;
   setLanguageMode: (mode: LanguageMode) => void;
   setNoteId: (noteId: string | null) => void;
+  setSessionId: (sessionId: string | null) => void;
   setLanguageLock: (lang: string | null) => void;
   setPartialSegments: (segments: Segment[]) => void;
   addPartialSegment: (segment: Segment) => void;
@@ -29,6 +31,7 @@ interface RecordingActions {
 const initialState: RecordingState = {
   status: 'idle',
   noteId: null,
+  sessionId: null,
   languageMode: 'auto',
   languageLock: null,
   asrModel: 'base_q5_1',
@@ -78,6 +81,11 @@ export const useRecordingStore = create<RecordingState & RecordingActions>((set)
   clearPartialSegments: () =>
     set({
       partialSegments: [],
+    }),
+
+  setSessionId: (sessionId) =>
+    set({
+      sessionId,
     }),
 
   reset: () => set(initialState),
