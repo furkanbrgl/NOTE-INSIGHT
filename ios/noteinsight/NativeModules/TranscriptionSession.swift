@@ -37,6 +37,12 @@ import AVFoundation
     private var lastEmittedPartialText: String = ""
     private var isPartialInferenceRunning: Bool = false
     
+    // VAD (Voice Activity Detection) for partial inference
+    private var lastSpeechAtMs: Int64 = 0
+    private var lastVadSkipLogMs: Int64 = 0 // Rate-limiting for VAD skip logs
+    private let vadThresholdRms: Float = 0.008
+    private let vadHangoverMs: Int64 = 600
+    
     // Configuration
     private let partialIntervalMs: Int = 900
     private let rollingWindowSec: Int = 6
@@ -169,6 +175,7 @@ import AVFoundation
         self.asrModel = asrModel
         self.languageLock = nil
         self.isRecording = true
+        self.lastSpeechAtMs = nowMs() // Initialize to current time (assume speech at start)
         
         requestMicrophonePermission { [weak self] granted in
             guard let self = self, granted else {
@@ -257,6 +264,19 @@ import AVFoundation
             // Convert Float32 → Int16
             guard let floatChannelData = buffer.floatChannelData else { return }
             let floatData = floatChannelData[0] // First (and only) channel
+            
+            // Compute RMS energy for VAD (lightweight, no allocations)
+            var sumSquares: Float = 0.0
+            for i in 0..<frameCount {
+                sumSquares += floatData[i] * floatData[i]
+            }
+            let rms = sqrt(sumSquares / Float(frameCount))
+            
+            // Update lastSpeechAtMs if energy exceeds threshold
+            if rms > self.vadThresholdRms {
+                self.lastSpeechAtMs = self.nowMs()
+            }
+            
             var int16Samples = [Int16](repeating: 0, count: frameCount)
             for i in 0..<frameCount {
                 let floatValue = floatData[i]
@@ -326,6 +346,18 @@ import AVFoundation
             return
         }
         
+        // VAD gating: Skip partial inference if no speech detected recently
+        let now = nowMs()
+        let timeSinceLastSpeech = now - lastSpeechAtMs
+        if timeSinceLastSpeech > vadHangoverMs {
+            // Rate-limited debug log (every ~5 seconds)
+            if (now - lastVadSkipLogMs) > 5000 {
+                print("[TranscriptionSession] [VAD] Skipping partial inference - silence detected (last speech: \(timeSinceLastSpeech)ms ago)")
+                lastVadSkipLogMs = now
+            }
+            return
+        }
+        
         // Skip if inference already running
         isPartialInferenceRunning = true
         
@@ -339,10 +371,16 @@ import AVFoundation
             
             guard samples.count >= minSamples else { return }
             
-            // Create temp WAV file
-            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("tmp_partial_\(self.noteId ?? "unknown").wav")
+            // Create temp WAV file (include sessionId to avoid collisions)
+            let sessionIdStr = self.sessionId ?? "unknown"
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("tmp_partial_\(self.noteId ?? "unknown")_\(sessionIdStr).wav")
             
-            // Remove existing temp file
+            // Ensure temp file is cleaned up in all code paths (success/failure)
+            defer {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+            
+            // Remove existing temp file (if any)
             try? FileManager.default.removeItem(at: tempURL)
             
             // Write WAV header + samples
@@ -390,9 +428,6 @@ import AVFoundation
                     }
                 }
             }
-            
-            // Cleanup temp file
-            try? FileManager.default.removeItem(at: tempURL)
             
             guard result.error == nil, !finalText.isEmpty else { return }
             
@@ -446,6 +481,12 @@ import AVFoundation
         audioProcessingQueue.sync {
             // All pending writes are flushed
         }
+    }
+    
+    // MARK: - VAD Helper
+    
+    private func nowMs() -> Int64 {
+        return Int64(Date().timeIntervalSince1970 * 1000)
     }
     
     private func waitForPartialInferenceToComplete(timeoutMs: Int = 5000) {

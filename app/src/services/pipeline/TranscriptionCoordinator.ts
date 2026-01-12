@@ -11,6 +11,10 @@ class TranscriptionCoordinatorService {
   private unsubscribePartial: (() => void) | null = null;
   private unsubscribeFinal: (() => void) | null = null;
   private insertedFinalKeys: Set<string> = new Set();
+  
+  // Track last active session for final event gating after store reset
+  private lastActiveSessionId: string | null = null;
+  private lastActiveNoteId: string | null = null;
 
   initialize(): void {
     if (this.unsubscribePartial) return; // Already initialized
@@ -34,6 +38,12 @@ class TranscriptionCoordinatorService {
   resetSession(): void {
     this.insertedFinalKeys.clear();
     useRecordingStore.getState().clearPartialSegments();
+  }
+
+  beginSession(noteId: string, sessionId: string): void {
+    this.lastActiveSessionId = sessionId;
+    this.lastActiveNoteId = noteId;
+    console.log(`[TranscriptionCoordinator] Session started - noteId: ${noteId}, sessionId: ${sessionId}`);
   }
 
   private handlePartial = (event: AsrPartialEvent): void => {
@@ -73,21 +83,24 @@ class TranscriptionCoordinatorService {
   private handleFinal = (event: AsrFinalEvent): void => {
     const store = useRecordingStore.getState();
     
-    // For final events: sessionId gating is conditional
-    // - If store.sessionId is set (we're recording), it must match
-    // - If store.sessionId is null (store was reset), allow processing (final events are expected after stop)
-    if (store.sessionId && store.sessionId !== event.sessionId) {
-      console.log(`[TranscriptionCoordinator] Ignoring stale final event - sessionId mismatch (store: ${store.sessionId}, event: ${event.sessionId})`);
-      return;
+    // Strict sessionId gating:
+    // - If store.sessionId is set (active session), it must match
+    // - If store.sessionId is null (store reset), only accept if event matches lastActiveSessionId
+    if (store.sessionId) {
+      // Active session: must match exactly
+      if (store.sessionId !== event.sessionId) {
+        console.log(`[TranscriptionCoordinator] Ignoring stale final event - sessionId mismatch (store: ${store.sessionId}, event: ${event.sessionId})`);
+        return;
+      }
+    } else {
+      // Store reset: only accept if event matches last active session
+      if (event.sessionId !== this.lastActiveSessionId || event.noteId !== this.lastActiveNoteId) {
+        console.log(`[TranscriptionCoordinator] Ignoring stale final event - doesn't match last active session (lastActive: ${this.lastActiveSessionId}/${this.lastActiveNoteId}, event: ${event.sessionId}/${event.noteId})`);
+        return;
+      }
     }
     
-    // Verify noteId matches when available (for safety)
-    if (store.noteId && store.noteId !== event.noteId) {
-      console.log(`[TranscriptionCoordinator] Ignoring final event - noteId mismatch (store: ${store.noteId}, event: ${event.noteId})`);
-      return;
-    }
-    
-    console.log(`[TranscriptionCoordinator] handleFinal for noteId: ${event.noteId}, sessionId: ${event.sessionId}${store.sessionId ? '' : ' (store reset, allowing final event)'}`);
+    console.log(`[TranscriptionCoordinator] handleFinal for noteId: ${event.noteId}, sessionId: ${event.sessionId}`);
 
     // Deduplicate finals using startMs+endMs+text as key
     const segmentsToInsert: Omit<Segment, 'id' | 'noteId'>[] = [];
@@ -111,6 +124,10 @@ class TranscriptionCoordinatorService {
     if (segmentsToInsert.length > 0) {
       insertSegments(event.noteId, segmentsToInsert);
       console.log(`[TranscriptionCoordinator] Inserted ${segmentsToInsert.length} final segment(s) for noteId: ${event.noteId}`);
+      
+      // Clear lastActiveSessionId after successful insert to prevent accepting duplicate events
+      this.lastActiveSessionId = null;
+      this.lastActiveNoteId = null;
     } else {
       console.log(`[TranscriptionCoordinator] No new segments to insert (already existed or empty)`);
     }

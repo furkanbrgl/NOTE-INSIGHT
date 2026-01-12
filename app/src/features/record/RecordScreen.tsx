@@ -83,6 +83,9 @@ export function RecordScreen() {
 
       // Reset coordinator session
       TranscriptionCoordinator.resetSession();
+      
+      // Begin new session in coordinator (for final event gating after store reset)
+      TranscriptionCoordinator.beginSession(newNoteId, newSessionId);
 
       // Start native recording
       await TranscriptionNative.startRecording({
