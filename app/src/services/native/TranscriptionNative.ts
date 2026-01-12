@@ -45,6 +45,8 @@ export interface StopRecordingResult {
   audioPath: string;
   durationMs: number;
   languageLock: string | null;
+  status?: 'ok' | 'deferring_stop' | 'too_short' | 'error';
+  error?: string;
 }
 
 type EventCallback<T = unknown> = (data: T) => void;

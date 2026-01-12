@@ -23,6 +23,11 @@ import AVFoundation
     private var asrModel: String = "base_q5_1"
     private var isRecording: Bool = false
     
+    // Race condition prevention
+    private var isStarting: Bool = false
+    private var didEngineStart: Bool = false
+    private var pendingStopLanguageLock: String?
+    
     // Audio components (Phase 2: AVAudioEngine only)
     private var audioEngine: AVAudioEngine?
     private var resampleMixer: AVAudioMixerNode?
@@ -169,6 +174,11 @@ import AVFoundation
             return
         }
         
+        // Reset state flags
+        self.isStarting = true
+        self.didEngineStart = false
+        self.pendingStopLanguageLock = nil
+        
         self.noteId = noteId
         self.sessionId = sessionId
         self.languageMode = languageMode
@@ -181,6 +191,7 @@ import AVFoundation
             guard let self = self, granted else {
                 print("[TranscriptionSession] Microphone permission denied")
                 self?.isRecording = false
+                self?.isStarting = false
                 return
             }
             
@@ -188,12 +199,14 @@ import AVFoundation
             
             guard self.setupAudioSession() else {
                 self.isRecording = false
+                self.isStarting = false
                 return
             }
             
             guard let wavURL = self.getAudioFilePath(noteId: noteId) else {
                 print("[TranscriptionSession] Failed to get audio file path")
                 self.isRecording = false
+                self.isStarting = false
                 return
             }
             
@@ -205,6 +218,7 @@ import AVFoundation
             if self.wavWriter == nil {
                 print("[TranscriptionSession] Failed to create WAV writer")
                 self.isRecording = false
+                self.isStarting = false
                 return
             }
             print("[TranscriptionSession] WAV file writer created")
@@ -300,9 +314,26 @@ import AVFoundation
             try engine.start()
             self.audioEngine = engine
             print("[TranscriptionSession] AVAudioEngine started for live captions")
+            
+            // Engine started successfully and tap is installed - mark as ready
+            self.didEngineStart = true
+            self.isStarting = false
+            
+            // Check if stop was requested while starting
+            if let pendingLock = self.pendingStopLanguageLock {
+                print("[TranscriptionSession] Stop was requested during start, stopping now")
+                self.pendingStopLanguageLock = nil
+                // Call stopRecording asynchronously to avoid blocking
+                DispatchQueue.main.async { [weak self] in
+                    _ = self?.stopRecording(languageLock: pendingLock)
+                }
+                return
+            }
         } catch {
             print("[TranscriptionSession] Failed to start audio engine: \(error)")
             isRecording = false
+            isStarting = false
+            didEngineStart = false
             return
         }
         
@@ -501,7 +532,20 @@ import AVFoundation
     
     @objc func stopRecording(languageLock: String) -> [String: Any] {
         guard isRecording, let currentNoteId = noteId else {
-            return ["audioPath": "", "durationMs": 0, "languageLock": languageLock]
+            return ["audioPath": "", "durationMs": 0, "languageLock": languageLock, "status": "error"]
+        }
+        
+        // Check if stop was called before engine started (race condition)
+        if isStarting && !didEngineStart {
+            print("[TranscriptionSession] Stop requested before engine started, deferring stop")
+            pendingStopLanguageLock = languageLock
+            emitState() // Emit state so JS knows "finishing"
+            return [
+                "audioPath": "",
+                "durationMs": 0,
+                "languageLock": languageLock,
+                "status": "deferring_stop"
+            ]
         }
         
         isRecording = false
@@ -526,7 +570,7 @@ import AVFoundation
         // Finalize WAV file
         guard let wavWriter = wavWriter, let filePath = audioFilePath else {
             print("[TranscriptionSession] No WAV writer or file path")
-            return ["audioPath": "", "durationMs": 0, "languageLock": languageLock]
+            return ["audioPath": "", "durationMs": 0, "languageLock": languageLock, "status": "error"]
         }
         
         let finalizedURL = wavWriter.finish()
@@ -536,8 +580,42 @@ import AVFoundation
         let durationSec = Double(totalFramesWritten) / 16000.0
         let durationMs = Int(durationSec * 1000.0)
         
+        // Check if recording is too short (0 frames written or 0-byte file)
+        var fileSize: Int64 = 0
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: finalizedURL.path),
+           let size = attributes[.size] as? Int64 {
+            fileSize = size
+        }
+        
+        if totalFramesWritten == 0 || fileSize == 0 || durationMs <= 0 {
+            print("[TranscriptionSession] Recording too short - totalFramesWritten: \(totalFramesWritten), fileSize: \(fileSize) bytes, durationMs: \(durationMs)")
+            
+            // Delete the 0-byte WAV file
+            try? FileManager.default.removeItem(at: finalizedURL)
+            print("[TranscriptionSession] Deleted 0-byte WAV file")
+            
+            // Reset flags
+            isStarting = false
+            didEngineStart = false
+            
+            self.languageLock = languageLock
+            emitState()
+            
+            return [
+                "audioPath": "",
+                "durationMs": 0,
+                "languageLock": languageLock,
+                "status": "too_short",
+                "error": "recording_too_short"
+            ]
+        }
+        
         print("[TranscriptionSession] Stopped recording, duration: \(durationMs)ms, path: \(filePath.path)")
         print("[TranscriptionSession] Language lock for transcription: \(languageLock)")
+        
+        // Reset flags
+        isStarting = false
+        didEngineStart = false
         
         self.languageLock = languageLock
         emitState()
@@ -551,7 +629,8 @@ import AVFoundation
         return [
             "audioPath": finalizedURL.path,
             "durationMs": durationMs,
-            "languageLock": languageLock
+            "languageLock": languageLock,
+            "status": "ok"
         ]
     }
     

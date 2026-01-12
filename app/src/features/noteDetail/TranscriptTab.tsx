@@ -1,10 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useRoute, useNavigation, type RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../app/navigation/RootNavigator';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { listSegments } from '../../services/storage/segmentsRepo';
-import { getNote } from '../../services/storage/notesRepo';
+import { getNote, deleteNote } from '../../services/storage/notesRepo';
 import type { Segment } from '../../services/models/types';
 
 type TranscriptTabParams = {
@@ -12,6 +14,7 @@ type TranscriptTabParams = {
 };
 
 type TranscriptTabRouteProp = RouteProp<TranscriptTabParams, 'Transcript'>;
+type TranscriptTabNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 type PlaybackStatus = 'no_audio' | 'loading' | 'playing' | 'paused' | 'stopped';
 
@@ -24,6 +27,7 @@ function formatTimestamp(ms: number): string {
 
 export function TranscriptTab() {
   const route = useRoute<TranscriptTabRouteProp>();
+  const navigation = useNavigation<TranscriptTabNavigationProp>();
   const { noteId } = route.params;
   const [segments, setSegments] = useState<Segment[]>([]);
   const [audioPath, setAudioPath] = useState<string | null>(null);
@@ -31,7 +35,9 @@ export function TranscriptTab() {
   const soundRef = useRef<Audio.Sound | null>(null);
 
   const [isTranscribing, setIsTranscribing] = useState(true);
+  const [transcriptionFailed, setTranscriptionFailed] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollStartMsRef = useRef<number | null>(null);
 
   console.log('[TranscriptTab] noteId received:', noteId);
 
@@ -42,50 +48,112 @@ export function TranscriptTab() {
     if (loadedSegments.length > 0) {
       console.log('[TranscriptTab] First segment:', JSON.stringify(loadedSegments[0]));
       setIsTranscribing(false);
+      setTranscriptionFailed(false); // Reset failure state when segments appear
       // Stop polling once we have segments
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
+      pollStartMsRef.current = null; // Reset poll start time
     }
     setSegments(loadedSegments);
     return loadedSegments.length;
   }, [noteId]);
+
+  // Helper function to check if note is invalid
+  const isNoteInvalid = useCallback((note: ReturnType<typeof getNote>): boolean => {
+    if (!note) return true;
+    // Invalid if durationMs <= 0 OR audioPath is missing/empty
+    if ((note.durationMs !== null && note.durationMs <= 0) || !note.audioPath || note.audioPath.trim() === '') {
+      return true;
+    }
+    return false;
+  }, []);
 
   // Load note and segments on focus
   useFocusEffect(
     useCallback(() => {
       console.log('[TranscriptTab] useFocusEffect triggered, loading segments for noteId:', noteId);
       
+      // Load note first to check validity
+      const note = getNote(noteId);
+      
+      // Check if note is invalid before starting polling
+      if (isNoteInvalid(note)) {
+        console.log('[TranscriptTab] Note is invalid (durationMs <= 0 or audioPath missing), skipping polling');
+        setIsTranscribing(false);
+        setTranscriptionFailed(true);
+        setSegments([]);
+        setAudioPath(null);
+        setPlaybackStatus('no_audio');
+        pollStartMsRef.current = null;
+        return;
+      }
+      
       // Load segments initially
       const count = loadSegments();
+      
+      // Reset failure state and poll start time
+      setTranscriptionFailed(false);
+      pollStartMsRef.current = null;
       
       // If no segments yet, start polling (whisper transcription is async)
       if (count === 0) {
         setIsTranscribing(true);
+        pollStartMsRef.current = Date.now(); // Record when polling starts
         console.log('[TranscriptTab] No segments yet, starting poll for transcription...');
         
-        // Poll every 1 second for up to 60 seconds
-        let pollCount = 0;
+        // Poll every 1 second for up to 20 seconds
         pollIntervalRef.current = setInterval(() => {
-          pollCount++;
-          const newCount = loadSegments();
+          const pollStartMs = pollStartMsRef.current;
+          if (!pollStartMs) {
+            // Poll start time not set, stop polling
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+            return;
+          }
           
-          if (newCount > 0 || pollCount >= 60) {
+          const elapsedMs = Date.now() - pollStartMs;
+          
+          // Check if note became invalid during polling
+          const currentNote = getNote(noteId);
+          if (isNoteInvalid(currentNote)) {
+            console.log('[TranscriptTab] Note became invalid during polling, stopping');
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
               pollIntervalRef.current = null;
             }
             setIsTranscribing(false);
-            if (pollCount >= 60 && newCount === 0) {
-              console.log('[TranscriptTab] Polling timed out, no transcription received');
+            setTranscriptionFailed(true);
+            pollStartMsRef.current = null;
+            return;
+          }
+          
+          // Check timeout (20 seconds)
+          if (elapsedMs > 20000) {
+            console.log('[TranscriptTab] Polling timed out after 20s, no transcription received');
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
             }
+            setIsTranscribing(false);
+            setTranscriptionFailed(true);
+            pollStartMsRef.current = null;
+            return;
+          }
+          
+          const newCount = loadSegments();
+          
+          if (newCount > 0) {
+            // Segments found, stop polling (handled in loadSegments)
+            // No need to do anything here, loadSegments already stops polling
           }
         }, 1000);
       }
 
-      // Load note to get audioPath
-      const note = getNote(noteId);
+      // Load audio path (note already loaded above)
       if (note?.audioPath) {
         console.log('[TranscriptTab] Audio path found:', note.audioPath);
         // Check if file exists (absolute paths from previous installs may not exist)
@@ -115,8 +183,9 @@ export function TranscriptTab() {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
         }
+        pollStartMsRef.current = null;
       };
-    }, [noteId, loadSegments])
+    }, [noteId, loadSegments, isNoteInvalid])
   );
 
   // Cleanup sound on unmount or noteId change
@@ -246,25 +315,67 @@ export function TranscriptTab() {
     </View>
   );
 
-  const renderEmpty = () => (
+  const handleReRecord = useCallback(() => {
+    // Navigate back to MainTabs (which contains Record screen)
+    navigation.navigate('MainTabs');
+  }, [navigation]);
+
+  const handleDeleteNote = useCallback(() => {
+    // Delete note and navigate back to MainTabs
+    deleteNote(noteId);
+    console.log('[TranscriptTab] Deleted note:', noteId);
+    navigation.navigate('MainTabs');
+  }, [noteId, navigation]);
+
+  const renderEmpty = () => {
+    // Check if note is invalid to show appropriate message
+    const note = getNote(noteId);
+    const isInvalid = isNoteInvalid(note);
+    const showFailureUI = transcriptionFailed || isInvalid;
+    
+    return (
     <View style={styles.emptyContainer}>
-      {isTranscribing ? (
-        <>
-          <Text style={styles.emptyTitle}>Transcribing...</Text>
-          <Text style={styles.emptySubtitle}>
-            Please wait while we process your audio
-          </Text>
-        </>
-      ) : (
-        <>
-          <Text style={styles.emptyTitle}>No Transcript</Text>
-          <Text style={styles.emptySubtitle}>
-            No transcript segments available for this note
-          </Text>
-        </>
-      )}
-    </View>
-  );
+        {showFailureUI ? (
+          <>
+            <Text style={styles.emptyTitle}>Transcription not available</Text>
+            <Text style={styles.emptySubtitle}>
+              Recording too short or failed
+            </Text>
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.reRecordButton]}
+                onPress={handleReRecord}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.actionButtonText}>Re-record</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.deleteButton]}
+                onPress={handleDeleteNote}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.actionButtonText}>Delete note</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : isTranscribing ? (
+          <>
+            <Text style={styles.emptyTitle}>Transcribing...</Text>
+            <Text style={styles.emptySubtitle}>
+              Please wait while we process your audio
+            </Text>
+          </>
+        ) : (
+          <>
+      <Text style={styles.emptyTitle}>No Transcript</Text>
+      <Text style={styles.emptySubtitle}>
+        No transcript segments available for this note
+      </Text>
+          </>
+        )}
+      </View>
+    );
+  };
 
   const renderHeader = () => (
     <View style={styles.playerContainer}>
@@ -371,5 +482,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888',
     textAlign: 'center',
+    marginBottom: 24,
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  actionButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+    marginHorizontal: 6,
+  },
+  reRecordButton: {
+    backgroundColor: '#007AFF',
+  },
+  deleteButton: {
+    backgroundColor: '#FF3B30',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

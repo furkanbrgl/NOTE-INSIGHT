@@ -75,3 +75,19 @@ export function deleteNote(noteId: string): void {
   console.log('[notesRepo] Deleted note and cascaded segments:', noteId);
 }
 
+/**
+ * Mark a note as canceled/failed (recording too short or invalid).
+ * Sets durationMs=0, audioPath=null, insightsStatus="failed"
+ */
+export function markNoteCanceled(noteId: string, languageLock: string | null = null): void {
+  // Get current note to preserve languageLock if not provided
+  const note = getNote(noteId);
+  const finalLanguageLock = languageLock ?? note?.languageLock ?? null;
+  
+  runSQL(
+    `UPDATE notes SET durationMs = 0, audioPath = NULL, insightsStatus = 'failed', updatedAt = ?, languageLock = ? WHERE id = ?`,
+    [Date.now(), finalLanguageLock, noteId]
+  );
+  console.log('[notesRepo] Marked note as canceled:', noteId);
+}
+

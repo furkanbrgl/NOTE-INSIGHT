@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -13,7 +14,7 @@ import type { RootStackParamList } from '../../app/navigation/RootNavigator';
 import { useRecordingStore } from '../../app/store/useRecordingStore';
 import { TranscriptionNative } from '../../services/native/TranscriptionNative';
 import { TranscriptionCoordinator } from '../../services/pipeline/TranscriptionCoordinator';
-import { insertNote, updateNoteStopInfo } from '../../services/storage/notesRepo';
+import { insertNote, updateNoteStopInfo, markNoteCanceled } from '../../services/storage/notesRepo';
 import type { Note } from '../../services/models/types';
 
 type RecordNavigationProp = NativeStackNavigationProp<RootStackParamList, 'MainTabs'>;
@@ -122,15 +123,64 @@ export function RecordScreen() {
         languageLock: noteLanguageLock,
       });
 
-      // Update note in database with transcription result
+      console.log('[RecordScreen] Recording stopped:', result);
+
+      // Handle deferring_stop status
+      if (result.status === 'deferring_stop') {
+        console.log('[RecordScreen] Stop deferred, waiting for final event...');
+        try {
+          // Wait for final event with timeout (12 seconds)
+          const finalEvent = await TranscriptionCoordinator.waitForFinal(noteId, sessionId, 12000);
+          console.log('[RecordScreen] Final event received after deferred stop');
+          
+          // Update note with final result
+          updateNoteStopInfo(noteId, {
+            audioPath: finalEvent.segments.length > 0 ? result.audioPath || '' : '',
+            durationMs: result.durationMs,
+            languageLock: finalEvent.languageLock || noteLanguageLock,
+            updatedAt: Date.now(),
+          });
+
+          // Check if valid before navigating
+          const isValidStop = Boolean(result.audioPath) && result.durationMs > 0;
+          if (isValidStop) {
+            const savedNoteId = noteId;
+            reset();
+            navigation.navigate('NoteDetail', { noteId: savedNoteId });
+          } else {
+            // Invalid even after final event
+            markNoteCanceled(noteId, noteLanguageLock);
+            reset();
+            Alert.alert('Recording too short', 'The recording was too short to process.');
+          }
+        } catch (timeoutError) {
+          console.error('[RecordScreen] Timeout waiting for final event:', timeoutError);
+          markNoteCanceled(noteId, noteLanguageLock);
+          reset();
+          Alert.alert('Error', 'Recording timed out. Please try again.');
+        }
+        return;
+      }
+
+      // Compute isValidStop: audioPath exists, durationMs > 0, status is not too_short
+      const isValidStop = Boolean(result.audioPath) && result.durationMs > 0 && result.status !== 'too_short';
+
+      if (!isValidStop) {
+        // Invalid recording (too short or error)
+        console.log('[RecordScreen] Recording invalid - too short or error');
+        markNoteCanceled(noteId, result.languageLock || noteLanguageLock);
+        reset();
+        Alert.alert('Recording too short', 'The recording was too short to process. Please record for at least 1 second.');
+        return;
+      }
+
+      // Valid recording - update note and navigate
       updateNoteStopInfo(noteId, {
         audioPath: result.audioPath,
         durationMs: result.durationMs,
-        languageLock: result.languageLock || noteLanguageLock, // Use result if available, otherwise use what we sent
+        languageLock: result.languageLock || noteLanguageLock,
         updatedAt: Date.now(),
       });
-
-      console.log('[RecordScreen] Recording stopped:', result);
 
       // Navigate to note detail
       const savedNoteId = noteId;
@@ -138,7 +188,11 @@ export function RecordScreen() {
       navigation.navigate('NoteDetail', { noteId: savedNoteId });
     } catch (error) {
       console.error('[RecordScreen] Failed to stop recording:', error);
+      if (noteId) {
+        markNoteCanceled(noteId, languageMode);
+      }
       reset();
+      Alert.alert('Error', 'Failed to stop recording. Please try again.');
     }
   }, [noteId, sessionId, languageMode, stop, reset, navigation]);
 
