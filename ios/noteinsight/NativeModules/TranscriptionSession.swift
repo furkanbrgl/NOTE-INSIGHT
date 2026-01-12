@@ -53,6 +53,7 @@ import AVFoundation
     private let rollingWindowSec: Int = 6
     private let minPartialChars: Int = 3
     private let maxPartialSegments: Int = 10
+    private let minViableDurationMs: Int = 1500 // Minimum duration for transcription (prevents junk)
     
     // Whisper
     private var isWhisperModelLoaded: Bool = false
@@ -604,6 +605,30 @@ import AVFoundation
             return [
                 "audioPath": "",
                 "durationMs": 0,
+                "languageLock": languageLock,
+                "status": "too_short",
+                "error": "recording_too_short"
+            ]
+        }
+        
+        // Minimum viable audio check: prevent junk transcriptions from very short clips
+        if durationMs < minViableDurationMs {
+            print("[TranscriptionSession] Recording too short for transcription - duration: \(durationMs)ms (minimum: \(minViableDurationMs)ms)")
+            
+            // Delete the WAV file
+            try? FileManager.default.removeItem(at: finalizedURL)
+            print("[TranscriptionSession] Deleted short recording WAV file")
+            
+            // Reset flags
+            isStarting = false
+            didEngineStart = false
+            
+            self.languageLock = languageLock
+            emitState()
+            
+            return [
+                "audioPath": "",
+                "durationMs": durationMs,
                 "languageLock": languageLock,
                 "status": "too_short",
                 "error": "recording_too_short"
